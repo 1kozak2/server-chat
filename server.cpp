@@ -60,9 +60,9 @@ std::string format_message(const std::string& name, const std::string& message) 
 
 void broadcast(const std::string& message, SOCKET sender_socket) {
     EnterCriticalSection(&clients_lock); // BEGIN CRITICAL SECTION
-    for (SOCKET client : clients) {
-        if (client != sender_socket) {
-            send(client, message.c_str(), message.length(), 0);
+    for (const auto& client : clients) {
+        if (client.socket != sender_socket) {
+            send(client.socket, message.c_str(), message.length(), 0);
         }
     }
     LeaveCriticalSection(&clients_lock); // END CRITICAL SECTION
@@ -115,8 +115,20 @@ std::string get_client_name(SOCKET client_socket) {
     return name;
 }
 
-void handle_client(SOCKET client_socket) {
+void handle_client(ClientInfo client_info) {
+    SOCKET client_socket = client_info.socket;
+    std::string client_name = client_info.name;
+
+    // Send welcome message with instructions
+    send(client_socket, WELCOME_MESSAGE.c_str(), WELCOME_MESSAGE.length(), 0);
+
+    // Announce new connection with clean formatting
+    std::string connect_msg = "\r\n>> " + client_name + " has joined the chat <<\r\n";
+    std::cout << connect_msg;
+    broadcast(connect_msg, client_socket);
+
     char buffer[BUFFER_SIZE];
+    std::string current_message;
 
     while (true) {
         int bytes_received = recv(client_socket, buffer, BUFFER_SIZE - 1, 0);
@@ -125,19 +137,62 @@ void handle_client(SOCKET client_socket) {
         }
 
         buffer[bytes_received] = '\0';
-        std::string msg = "Client " + std::to_string((int)client_socket) + ": " + buffer;
-        std::cout << msg;
-        broadcast(msg, client_socket);
+
+        // Add received data to current message
+        for (int i = 0; i < bytes_received; i++) {
+            char c = buffer[i];
+
+            // Check for Enter key (newline or carriage return)
+            if (c == '\n' || c == '\r') {
+                // Process the complete message if it's not empty
+                if (!current_message.empty()) {
+                    // Check if client wants to exit
+                    if (current_message == "exit") {
+                        goto cleanup; // Break out of both loops
+                    }
+
+                    // Format and broadcast the message
+                    std::string formatted_msg = format_message(client_name, current_message);
+                    std::cout << formatted_msg;
+                    broadcast(formatted_msg, client_socket);
+
+                    // Clear the message for next input
+                    current_message.clear();
+                }
+            }
+                // Add printable characters to the message
+            else if (c >= 32 && c <= 126) {
+                current_message += c;
+                // Echo the character back to the client
+                send(client_socket, &c, 1, 0);
+            }
+                // Handle backspace
+            else if (c == '\b' || c == 127) {
+                if (!current_message.empty()) {
+                    current_message.pop_back();
+                    // Send backspace sequence to client
+                    const char backspace_seq[] = "\b \b";
+                    send(client_socket, backspace_seq, 3, 0);
+                }
+            }
+        }
     }
 
+    cleanup:
     closesocket(client_socket);
 
-    // Remove client
+    // Remove client from list
     EnterCriticalSection(&clients_lock);
-    clients.erase(std::remove(clients.begin(), clients.end(), client_socket), clients.end());
+    clients.erase(std::remove_if(
+            clients.begin(), clients.end(),
+            [client_socket](const ClientInfo& ci) { return ci.socket == client_socket; }
+    ), clients.end());
     LeaveCriticalSection(&clients_lock);
 
-    std::cout << "Client " << client_socket << " disconnected." << std::endl;
+    // Announce disconnect with clean formatting
+    std::string disconnect_msg = "\r\n>> " + client_name + " has left the chat <<\r\n";
+    std::cout << disconnect_msg;
+    broadcast(disconnect_msg, client_socket);
 }
 
 int main() {
@@ -186,13 +241,16 @@ int main() {
             std::cerr << "Accept failed.\n";
             continue;
         }
-
+        
+        // Get client name
+        std::string name = get_client_name(client_socket);
+        
         // Add to client list
         EnterCriticalSection(&clients_lock);
-        clients.push_back(client_socket);
+        clients.push_back({client_socket, name});
         LeaveCriticalSection(&clients_lock);
 
-        std::thread(handle_client, client_socket).detach(); // Spawn new thread
+        std::thread(handle_client, ClientInfo {client_socket, name}).detach(); // Spawn new thread
     }
 
     DeleteCriticalSection(&clients_lock);
