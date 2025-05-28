@@ -55,17 +55,27 @@ std::string get_timestamp() {
 // Format of the message so its readable and visible
 std::string format_message(const std::string& name, const std::string& message) {
     std::string timestamp = get_timestamp();
-    return "\r\n[" + timestamp + "] " + name + ": " + message + "\r\n";
+    return "[" + timestamp + "] " + name + ": " + message + "\r\n";
 }
 
-void broadcast(const std::string& message, SOCKET sender_socket) {
-    EnterCriticalSection(&clients_lock); // BEGIN CRITICAL SECTION
+// Broadcast to all clients including sender
+void broadcast_to_all(const std::string& message) {
+    EnterCriticalSection(&clients_lock);
+    for (const auto& client : clients) {
+        send(client.socket, message.c_str(), message.length(), 0);
+    }
+    LeaveCriticalSection(&clients_lock);
+}
+
+// Broadcast to all clients except sender (for system messages)
+void broadcast_except_sender(const std::string& message, SOCKET sender_socket) {
+    EnterCriticalSection(&clients_lock);
     for (const auto& client : clients) {
         if (client.socket != sender_socket) {
             send(client.socket, message.c_str(), message.length(), 0);
         }
     }
-    LeaveCriticalSection(&clients_lock); // END CRITICAL SECTION
+    LeaveCriticalSection(&clients_lock);
 }
 
 
@@ -101,7 +111,7 @@ std::string get_client_name(SOCKET client_socket) {
             }
         }
             // If it's a printable character, add it to name
-        else if (c >= 32 && c <= 126) {
+        else if (c >= 32 && c <= 126 && c != '\'' && c != '"') {
             name += c;
             // Echo the character back to client
             send(client_socket, &c, 1, 0);
@@ -150,11 +160,24 @@ void handle_client(ClientInfo client_info) {
                     if (current_message == "exit") {
                         goto cleanup; // Break out of both loops
                     }
-
+                    
+                    // Clear the input line for the sender by sending backspaces
+                    std::string clear_line = "\r";
+                    for (size_t j = 0; j < current_message.length() + 2; j++) { // +2 for "> "
+                        clear_line += " ";
+                    }
+                    clear_line += "\r";
+                    send(client_socket, clear_line.c_str(), clear_line.length(), 0);
+                    
                     // Format and broadcast the message
                     std::string formatted_msg = format_message(client_name, current_message);
                     std::cout << formatted_msg;
-                    broadcast(formatted_msg, client_socket);
+                    broadcast_to_all(formatted_msg);
+
+                    // Send a new prompt to the sender
+                    const std::string prompt = "> ";
+                    send(client_socket, prompt.c_str(), prompt.length(), 0);
+
 
                     // Clear the message for next input
                     current_message.clear();
@@ -249,6 +272,12 @@ int main() {
         EnterCriticalSection(&clients_lock);
         clients.push_back({client_socket, name});
         LeaveCriticalSection(&clients_lock);
+
+        // Send initial prompt to new client
+        const std::string initial_prompt = "> ";
+        send(client_socket, initial_prompt.c_str(), initial_prompt.length(), 0);
+
+        //Spawn new thread
 
         std::thread(handle_client, ClientInfo {client_socket, name}).detach(); // Spawn new thread
     }
