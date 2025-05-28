@@ -135,7 +135,7 @@ void handle_client(ClientInfo client_info) {
     // Announce new connection with clean formatting
     std::string connect_msg = "\r\n>> " + client_name + " has joined the chat <<\r\n";
     std::cout << connect_msg;
-    broadcast_to_all(connect_msg, client_socket);
+    broadcast_to_all(connect_msg);
 
     char buffer[BUFFER_SIZE];
     std::string current_message;
@@ -215,7 +215,7 @@ void handle_client(ClientInfo client_info) {
     // Announce disconnect with clean formatting
     std::string disconnect_msg = "\r\n>> " + client_name + " has left the chat <<\r\n";
     std::cout << disconnect_msg;
-    broadcast_to_all(disconnect_msg, client_socket);
+    broadcast_to_all(disconnect_msg);
 }
 
 int main() {
