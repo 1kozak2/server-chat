@@ -169,12 +169,56 @@ This ensures only one thread can modify the shared data at a time.
 
 ##  Theoretical Background
 
-###  Multithreading
-- Each client connection is handled by a separate thread:
-  ```cpp
-  std::thread(...).detach();
-  ```
-- Detached threads allow automatic cleanup without needing `join()`.
+## Multithreading 
+
+Multithreading allows the server to handle multiple clients concurrently without blocking or slowing down other connections. In this chat server, each client connection is assigned to a separate thread using C++’s `std::thread` class from the Standard Library.
+
+### Why Multithreading?
+
+Without multithreading, the server would have to handle one client at a time. A blocking operation such as `recv()` (which waits for incoming data) would prevent the server from responding to other clients. Multithreading solves this by running each client's communication in an independent execution flow.
+
+### How It’s Used in the Server
+
+When a new client connects, the main server loop accepts the connection using `accept()` and immediately spawns a new thread to handle that specific client:
+
+```cpp
+std::thread client_thread(handle_client, client_socket);
+client_thread.detach();
+```
+
+Each thread:
+- Prompts for and stores the client’s display name.
+- Continuously listens for input using `recv()`.
+- Processes and broadcasts messages.
+- Handles client disconnection and cleanup.
+
+Using `.detach()` makes the thread self-managing, meaning it will clean up after itself once execution finishes—without needing to be joined by the main thread.
+
+### Critical Considerations
+
+#### 1. Concurrency Control
+
+Multiple threads may access shared resources (like the `clients` list) simultaneously. Without protection, this would result in race conditions and undefined behavior. To prevent this, the server uses a Windows-specific synchronization primitive:
+
+```cpp
+CRITICAL_SECTION clients_lock;
+```
+
+All accesses to shared resources are wrapped with:
+
+```cpp
+EnterCriticalSection(&clients_lock);
+// modify shared resource
+LeaveCriticalSection(&clients_lock);
+```
+
+#### 2. Scalability
+
+This one-thread-per-client model works well for a small number of users, but threads are expensive in terms of memory and CPU context-switching. For large-scale systems, thread pools or asynchronous I/O models (like IOCP or `epoll` in Linux) are preferred.
+
+#### 3. Thread Lifecycle
+
+By detaching threads, they become "fire-and-forget". While convenient, this makes it harder to manage or track their state later. In more complex applications, you might consider storing `std::thread` objects and joining them during shutdown.
 
 ###  TCP/IP & Sockets
 - TCP provides:
