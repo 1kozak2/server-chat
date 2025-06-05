@@ -1,83 +1,204 @@
-# Multithreaded Chat Server in C++ (Windows, WinSock, Mutex)
+# Windows Multithreaded Chat Server
 
-## 🧠 Project Overview
-
-This project implements a multithreaded TCP chat server in C++ using the Windows Sockets API (`WinSock2`) and manual thread synchronization using **Windows mutexes and semaphores**.
-
-It creates a separate thread for each client and broadcasts messages between them, while ensuring thread-safe access to shared resources like the list of connected clients.
-
-This project is designed to:
-- Explore manual synchronization in multithreaded applications
-- Avoid high-level libraries or auto-managed synchronization
-- Develop a real-time communication server from scratch
+This project is a multithreaded TCP chat server written in C++ for Windows. It uses the **WinSock2** networking API and manual synchronization via **CRITICAL_SECTION** to manage concurrent clients. Each connected user is prompted to enter a name and is then placed into a shared chatroom, where all sent messages are **timestamped** and **broadcast** to all participants.
 
 ---
 
-## 🧪 Theory & Motivation
+##  Overview
 
-In a multithreaded environment, multiple clients can interact with shared memory (e.g., a list of sockets). This requires protection against race conditions.
+The server accepts multiple clients simultaneously and handles each in a separate thread. Incoming messages from one client are:
 
-This implementation uses:
-- **Mutex (via `CreateMutex`)** to protect access to shared state
-- **Optional Semaphore (via `CreateSemaphore`)** to limit the number of concurrent clients (disabled by default)
+- Formatted with a timestamp and their username.
+- Broadcast to all connected clients.
 
-This approach enforces **manual, low-level synchronization**, as required in the assignment — avoiding built-in features like `std::mutex` or `CRITICAL_SECTION`.
-
----
-
-## ⚙️ Implementation Details
-
-### 🔧 Technologies
-- C++11 (threads)
-- WinSock2 (network sockets)
-- Windows API: `HANDLE`, `CreateMutex`, `CreateSemaphore`
-
-### 🔁 Server Flow
-1. Initialize WinSock
-2. Create TCP socket, bind to port `12345`, and listen
-3. Accept new clients in a loop
-4. For each new client:
-   - Add them to a shared `std::vector<SOCKET>` (protected by mutex)
-   - Launch a thread to handle communication
-5. Broadcast incoming messages to all connected clients
-
-### 🔐 Synchronization
-
-| Operation         | Mechanism         | API Call                        |
-|------------------|-------------------|---------------------------------|
-| Shared access     | Mutex             | `CreateMutex`, `WaitForSingleObject`, `ReleaseMutex` |
-| (Optional) client limit | Semaphore         | `CreateSemaphore`, `ReleaseSemaphore`   |
+This implementation uses low-level socket programming and manual concurrency control to demonstrate a foundational networking and threading approach in C++ on Windows.
 
 ---
 
-## 🧵 Threads and Their Responsibilities
+##  Features
 
-| Thread             | Role                                        |
-|--------------------|---------------------------------------------|
-| `main()`           | Accepts client connections, starts threads  |
-| `handle_client()`  | Receives from a single client and broadcasts |
-
----
-
-## 🔒 Critical Sections and Protection
-
-| Critical Section                 | Purpose                          | Protection Used      |
-|----------------------------------|----------------------------------|-----------------------|
-| Add client to list               | Track active connections         | `clients_mutex`       |
-| Remove client on disconnect      | Keep list clean                  | `clients_mutex`       |
-| Broadcast message                | Send safely to all other clients | `clients_mutex`       |
-
-> You may enable semaphore logic to limit the number of concurrent clients.
+- Prompts each client for a display name (no IP/port IDs shown).
+- Clients receive a welcome banner and usage instructions.
+- All messages include a timestamp.
+- Messages are echoed back to the sender and broadcast to all clients.
+- Supports backspace and character echoing for terminal-style input.
+- Clients can disconnect gracefully by typing `exit`.
+- Server logs connection and disconnection events.
+- Uses `std::thread` for concurrent client handling.
+- Shared resources are protected using `CRITICAL_SECTION`.
 
 ---
 
-## ▶️ How to Build & Run
+##  Prerequisites
 
-### 🧱 Requirements
-- Windows 10 or newer
-- MinGW / MSYS2 (for `g++`) or Visual Studio
+- Windows OS (Windows 10 or newer recommended)
+- C++17 or later
+- C++ compiler that supports WinSock2 (e.g., Visual Studio)
+- Link against `ws2_32.lib`
 
-### 🛠️ Build with MinGW (MSYS2 example)
+---
+
+##  Compilation & Setup
+
+### Visual Studio
+
+1. Open a new Console Application project.
+2. Add `chat_server.cpp` to the project.
+3. Link against `ws2_32.lib`.
+4. Enable multithreaded runtime support (`/MT` or `/MD` depending on your setup).
+
+### Command Line (MSVC)
 
 ```bash
-g++ server.cpp -o server.exe -lws2_32 -std=c++11
+cl /EHsc chat_server.cpp /link ws2_32.lib
+```
+
+---
+
+##  How the Server Works
+
+1. **WinSock Initialization**  
+   The server initializes the Windows Sockets API (WinSock):
+   ```cpp
+   WSAStartup(MAKEWORD(2, 2), &wsa);
+   ```
+   This is required before using any socket-related functions.
+
+2. **Server Setup**  
+   - Creates a TCP socket with IPv4 (`AF_INET`) and `SOCK_STREAM`.
+   - Binds to port `12345`.
+   - Starts listening for connections using `listen()`.
+
+3. **Accepting Clients**  
+   ```cpp
+   SOCKET client_socket = accept(...);
+   ```
+   - Each new client is accepted and a new thread is created for communication.
+   - The socket is added to a global list of active connections.
+
+4. **Reading Client Name**  
+   - The `get_client_name()` function reads input one character at a time.
+   - Supports backspace and echoes input to mimic a terminal.
+   - Used for client identification in the chat.
+
+5. **Welcome Banner**  
+   - After entering a name, the client receives a welcome message and usage instructions using a predefined `WELCOME_MESSAGE`.
+
+6. **Message Handling**  
+   - Each client's thread reads input character-by-character.
+   - When Enter is pressed (`\n` or `\r`):
+     - If the message is `"exit"`, the client is disconnected.
+     - Otherwise:
+       - The message is formatted using `format_message()` with a timestamp and username.
+       - Then broadcast using `broadcast_to_all()`.
+
+7. **Client Disconnection**  
+   - Triggered by `"exit"` or network disconnect.
+   - Socket is closed and removed from the client list.
+   - A disconnection message is sent to remaining clients.
+
+---
+
+##  Code Breakdown
+
+###  WinSock Initialization
+```cpp
+WSAStartup(MAKEWORD(2, 2), &wsa);
+```
+Initializes WinSock. All networking requires this call to succeed first.
+
+###  Server Setup
+- Uses:
+  ```cpp
+  AF_INET, SOCK_STREAM, IPPROTO_TCP
+  ```
+- Binds to port `12345`.
+- Uses `listen()` to wait for incoming connections.
+
+###  Accepting Clients
+```cpp
+SOCKET client_socket = accept(...);
+```
+When a client connects:
+- A new thread is created.
+- The socket is stored in a `std::vector<ClientInfo>`.
+
+###  Reading Client Name
+- Done via `get_client_name()`.
+- Reads input one character at a time.
+- Echoes characters and supports backspace.
+
+###  Welcome Banner
+- A message string (constant `WELCOME_MESSAGE`) is sent after login.
+
+###  Message Handling
+- Executed inside `handle_client()`.
+- Reads and accumulates characters.
+- On newline:
+  - Checks for `"exit"`.
+  - Else: adds timestamp, formats the message, and broadcasts it.
+
+---
+
+##  Shared State & Synchronization
+
+All active clients are stored in:
+```cpp
+std::vector<ClientInfo> clients;
+```
+
+To prevent race conditions, a critical section is used:
+```cpp
+CRITICAL_SECTION clients_lock;
+```
+
+### Usage:
+```cpp
+InitializeCriticalSection(&clients_lock);
+
+EnterCriticalSection(&clients_lock);
+// Critical section
+LeaveCriticalSection(&clients_lock);
+
+DeleteCriticalSection(&clients_lock);
+```
+
+This ensures only one thread can modify the shared data at a time.
+
+---
+
+##  Theoretical Background
+
+###  Multithreading
+- Each client connection is handled by a separate thread:
+  ```cpp
+  std::thread(...).detach();
+  ```
+- Detached threads allow automatic cleanup without needing `join()`.
+
+###  TCP/IP & Sockets
+- TCP provides:
+  - Ordered delivery
+  - Reliable transmission
+  - Error checking
+- A socket is a bidirectional communication endpoint.
+
+###  Character-by-Character Input
+- The server processes input per character to:
+  - Support real-time backspace.
+  - Echo characters to the terminal.
+  - Filter unsafe input.
+- This greatly improves client UX, especially with Telnet.
+
+---
+
+##  Limitations
+
+-  No encryption — all communication is plaintext.
+-  No authentication or login system.
+-  No private messaging or command parsing.
+-  No username conflict resolution.
+-  No message history or logging to file.
+
+---
+
